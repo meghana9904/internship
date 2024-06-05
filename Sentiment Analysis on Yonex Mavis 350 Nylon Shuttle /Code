@@ -1,0 +1,414 @@
+#  importing necessary libraries
+
+import pandas as pd 
+import numpy as np
+import regex as re
+import seaborn as sns
+import matplotlib.pyplot as plt
+import emoji
+from autocorrect import Speller
+from wordcloud import WordCloud
+import nltk
+
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize,sent_tokenize
+from nltk.stem import PorterStemmer,LancasterStemmer,SnowballStemmer,WordNetLemmatizer
+
+from sklearn.model_selection import train_test_split,GridSearchCV
+from sklearn.metrics import accuracy_score,classification_report,f1_score,make_scorer
+from sklearn.compose import ColumnTransformer
+import pickle
+from collections import Counter
+import warnings
+warnings.filterwarnings('ignore')
+from sklearn.pipeline import Pipeline,make_pipeline
+from sklearn.preprocessing import OneHotEncoder,StandardScaler,OrdinalEncoder,FunctionTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.feature_extraction.text import CountVectorizer,TfidfVectorizer
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
+from sklearn.ensemble import RandomForestClassifier
+
+# data collection
+
+data=pd.read_csv(r"C:\Users\dell\Downloads\reviews_data_dump\reviews_badminton\data.csv")
+
+df=data.copy()
+
+df.info()
+
+df.head()
+
+# problem statement-sentimental analysis on yonex mavis 350 nylon shuttle
+
+# EDA to explore the data and DATA CLEANING
+
+df.isnull().sum()
+
+df.head()
+
+df.info()
+
+df.isnull().sum()
+
+df.head()
+
+#Handling null values
+df["Month"]=df["Month"].astype("string")
+df["Month"]=df["Month"].fillna("NA NA") 
+
+df.dropna(inplace=True)
+
+df.isnull().sum()
+
+df["difference in upvotes and downvotes"]=df["Up Votes"]-df["Down Votes"]
+
+df.describe()
+
+#Extract month and year of product reviewed
+def extract_month_and_year(input_string):
+    parts = input_string.split()
+    year = parts[-1]
+    month = ' '.join(parts[:-1])
+    return month, year
+
+df[['month', 'year']] = df['Month'].apply(lambda x: pd.Series(extract_month_and_year(x)))
+
+df.head()
+
+df["month"].value_counts()
+
+Product were reviewed in all the months. We can consider that product was purchased in all months 
+
+df.duplicated().sum()
+
+#Place of review
+df["Place of Review"].value_counts()
+
+#Extract Place from "Place Of Review"
+def city(input_string):
+    parts = input_string.split(", ")
+    city = parts[-1]
+    return city
+
+df[["city"]] = df['Place of Review'].apply(lambda x: pd.Series(city(x)))
+
+#To remove district from city
+def city1(input_string):
+    parts = input_string.split()
+    city1 = parts[0]
+    return city1
+
+#Data manipulation of "City"
+def replace_city(val):
+    val = val.lower()
+    if  ('bang' in val) or ("beng" in val) :
+        return 'Bengaluru'
+    elif 'hyd' in val :
+        return 'Hyderabad'
+    elif 'mang' in val:
+        return 'Mangalore'
+    elif "district" in val:
+        return  city1(val).capitalize()
+    else:
+        return val.capitalize()
+
+df["city"]=df["city"].apply(replace_city)
+
+df["city"].nunique()
+
+The reviewer of the product are from 2003 unique cities
+
+df["Ratings"].value_counts()
+
+plt.figure(figsize=(10,6))
+sns.countplot(data=df,y="city",order=df["city"].value_counts().index[:10])
+plt.title("distribution of cities of rating Yonux Mavis 350")
+plt.show()
+
+"Bengaluru" is the city where "Yonux Mavis 350" was mostly reviewed from , followed by Hyderabad , Chennai , New Delhi , and Mangalore is the 10th city.
+
+plt.figure(figsize=(10,6))
+sns.countplot(data=df,y="city",order=df["city"].value_counts().index[:10],hue="Ratings")
+plt.title("distribution of cities of rating Yonux Mavis 350")
+plt.show()
+
+From all the cities , the product is mostly reviewed as 5 and 4 . hence, product was good 
+
+df.columns
+
+text = " ".join(i for i in df["Review Title"])
+wordcloud = WordCloud(background_color="white", width=800, height=400).generate(text)
+plt.figure(figsize=(10, 5))  
+plt.imshow(wordcloud, interpolation='bilinear')
+plt.axis('off')
+plt.show()
+
+# 4. text preprocessing
+
+#Taking the required columns
+df1=df.iloc[:,6:8]
+
+dfc=df1.copy()
+
+dfc.head()
+
+dfc["Ratings"].value_counts()
+
+dfc = dfc.rename(columns={
+    'Review text': 'Review_Text',
+    'Ratings': 'Rating'
+})
+
+dfc.head()
+
+dfc.info()
+
+def edat(data,name): 
+    case=" ".join(dfc[name]).islower()
+    html_tags=dfc[name].apply(lambda x:True if re.search("<.+?>",x) else False).sum()
+    url=dfc[name].apply(lambda x:True if re.search("http[s]?://.+? +",x) else False).sum()
+    unwanted_chars=dfc[name].apply(lambda x:True if re.search("[]()*\-:;\".,@#$%^&0-9]",x) else False).sum()
+    if case==False:
+        print("not in lower case")
+    if html_tags>0:
+        print("have html tags")
+    if url>0:
+        print("have urls")
+    if unwanted_chars>0:
+        print("have unwanted characters")
+
+edat(dfc,"Review_Text")
+
+stp=stopwords.words("english")
+stp.remove("not")
+
+fv=dfc.iloc[:,0]
+cv=dfc.iloc[:,-1]
+
+fv
+
+cv
+
+cv= cv.map(lambda x: "Negative" if x in [1, 2] else ("Positive" if x in [3, 4, 5] else x))
+
+cv
+
+cv.value_counts()
+
+# splitting the data into xtrain and x_test
+x_train,x_test,y_train,y_test=train_test_split(fv,cv,test_size=0.2,random_state=3,stratify=cv)
+
+x_train=x_train.str.replace("READ MORE","")
+
+x_test=x_test.str.replace("READ MORE","")
+
+def lower(x):
+    return x.str.lower()
+
+def textpp(x,correct,emojii):
+    if emojii==True:
+        x=emoji.demojize(x)
+    x=re.sub("<.+?>"," ",x)
+    x=re.sub("http[s]?://.+? +"," ",x)
+    x=re.sub("[]()!_*\-:;\".,@#$%^&0-9]"," ",x)
+
+    if correct=="t":
+        x=TextBlob(x).correct().string
+    else:
+        x=x
+
+    return x
+
+def pre_pro(x):
+    return x.apply(textpp,args=("s",True))
+
+def advpp(x,stemm): ## tokenization,removing stopwords,stemming
+    ps=PorterStemmer()
+    ls=LancasterStemmer()
+    ss=SnowballStemmer(language="english")
+    wl=WordNetLemmatizer()
+
+    l=[]
+    for word in word_tokenize(x):
+        if word in stp:
+            pass
+        else:
+            if stemm=="p":
+                l.append(ps.stem(word))
+            elif stemm=="l":
+                l.append(ls.stem(word))
+            elif stemm=="s":
+                l.append(ss.stem(word))
+            elif stemm=="lemma":
+                l.append(wl.lemmatize(word,pos="v"))
+            else:
+                l.append(word)
+
+    return " ".join(l)
+
+def stw_advpp(x):
+    return x.apply(lambda x : advpp(x,"lemma"))
+
+# creating pipeline for preprocessing
+
+# pipe line for preprocessing. removing html tags,urls,unwanted characters and converting into lower case,demozije and stemmimg
+pre_pro_pip=Pipeline([("lower",FunctionTransformer(lower)),
+    ("preprocessing",FunctionTransformer(pre_pro)),
+                     ("stp_stemmimg",FunctionTransformer(stw_advpp))])
+
+pre_pro_pip
+
+# transformed the x_train data which is learned in pipeline
+fx_train=pre_pro_pip.fit_transform(x_train)
+
+fx_train
+
+# Exploratory Data Analysis after preprocessing
+
+eda_data=pd.concat([fx_train,y_train],axis=1)
+
+eda_data
+
+sns.countplot(x=eda_data["Rating"])
+plt.title("Count of postive and Negative Ratings")
+plt.show()
+
+We can cleary see that there are more positive reviwes are given by the customers
+
+# creating separate dataframe for negative
+negative=eda_data[eda_data["Rating"]=="Negative"]
+
+negative
+
+# creating separate dataframe for Positive
+positive=eda_data[eda_data["Rating"]=="Positive"]
+
+positive
+
+# for loop to join the text that belongs to pos
+f=[]
+for word in " ".join(positive["Review_Text"]).split():
+        f.append(word)
+
+# counting the most common words using counter function
+Counter(f).most_common(10)
+
+# for loop to join the mails that belongs to negative
+f1=[]
+for word in " ".join(negative["Review_Text"]).split():
+        f1.append(word)
+
+# counting the most common words using counter function
+Counter(f1).most_common(10)
+
+# for visualizing the most repeated or common words in text belongs positive we can use wordcloud
+wordcloud = WordCloud(width=800, height=400, background_color='white').generate(" ".join(positive["Review_Text"]))
+
+plt.imshow(wordcloud, interpolation='bilinear')
+plt.axis('off') 
+plt.show()
+
+# for visualizing the most repeated or common words in text belongs negative we can use wordcloud
+wordcloud = WordCloud(width=800, height=400, background_color='white').generate(" ".join(negative["Review_Text"]))
+
+plt.imshow(wordcloud, interpolation='bilinear')
+plt.axis('off') 
+plt.show()
+
+fx_test=pre_pro_pip.transform(x_test)
+
+fy_train=y_train.map({"Positive":1,"Negative":0})
+
+fy_test=y_test.map({"Positive":1,"Negative":0})
+
+# model creation / training
+
+count_vectorizer = CountVectorizer()
+tfidf_vectorizer = TfidfVectorizer()
+naive_bayes = MultinomialNB()
+logistic_regression = LogisticRegression()
+svm = SVC()
+random_forest = RandomForestClassifier()
+
+# Create pipelines
+pipelines = {
+    "Naive Bayes": Pipeline([
+        ("vectorizer", count_vectorizer),
+        ("classifier", naive_bayes)
+    ]),
+    "Logistic Regression": Pipeline([
+        ("vectorizer", count_vectorizer),
+        ("classifier", logistic_regression)
+    ]),
+    "SVM": Pipeline([
+        ("vectorizer", count_vectorizer),
+        ("classifier", svm)
+    ]),
+    "Random Forest": Pipeline([
+        ("vectorizer", tfidf_vectorizer),
+        ("classifier", random_forest)
+    ])
+}
+
+# Grid search parameters
+param_grids = {
+    "Naive Bayes": {"classifier__alpha": [1, 5, 10, 15]},
+    "Logistic Regression": {"classifier__C": [0.01, 0.1, 1, 10, 100],"classifier__penalty": ["l1", "l2"],
+                            "classifier__solver": ["saga"]},
+    "SVM": {"classifier__C": [0.01, 0.1, 1, 10, 100], "classifier__kernel": ["linear", "rbf"]},
+    "Random Forest": {"classifier__n_estimators": [25, 50, 75, 100]}
+}
+
+# Define the scorer
+scorer = make_scorer(f1_score, average='binary')
+
+best_models = {}
+
+# Grid Search with pipelines
+for name, pipeline in pipelines.items():
+    print("*"*10, name , "*"*10)
+    grid_search = GridSearchCV(pipeline, param_grid=param_grids[name], cv=3, scoring=scorer, return_train_score=True)
+    grid_search.fit(fx_train, fy_train)
+    best_model = grid_search.best_estimator_
+    best_models[name] = {
+        "best_params": grid_search.best_params_,
+        "best_score": grid_search.best_score_,
+        "best_estimator": best_model 
+    }
+
+    # Evaluation
+    y_pred = best_model.predict(fx_test)
+    f1 = f1_score(fy_test, y_pred)
+    print(f"{name} - F1 Score: {f1}")
+
+# Print best parameters and scores for each model
+for name, model_info in best_models.items():
+    print("*"*10, name , "*"*10)
+    print(f"{name} - Best Parameters: {model_info['best_params']}, Best F1 Score: {model_info['best_score']}")
+
+
+for name, model_info in best_models.items():
+    model = model_info['best_estimator']
+
+for name, model_info in best_models.items():
+    print("*"*10, name, "*"*10)
+    
+    y_test_pred = model.predict(fx_test)
+    print("Test Score (F1)",f1_score(fy_test, y_test_pred))
+    
+
+import os
+import joblib
+
+directory = r'C:\Users\dell\Downloads\flipkart_project'
+if not os.path.exists(directory):
+    os.makedirs(directory)
+for name, model_info in best_models.items():
+    model = model_info['best_estimator']
+    joblib.dump(model, os.path.join(directory, f"{name}.pkl"))
+
+print("Models dumped successfully.")
+
+
